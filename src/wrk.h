@@ -22,6 +22,10 @@
 #define SOCKET_TIMEOUT_MS   2000
 #define RECORD_INTERVAL_MS  100
 
+#ifndef IPPROTO_MPTCP
+#define IPPROTO_MPTCP 262
+#endif
+
 extern const char *VERSION;
 
 typedef struct {

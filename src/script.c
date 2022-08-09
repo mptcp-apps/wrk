@@ -21,6 +21,7 @@ static int script_thread_index(lua_State *);
 static int script_thread_newindex(lua_State *);
 static int script_wrk_lookup(lua_State *);
 static int script_wrk_connect(lua_State *);
+static int script_wrk_mpconnect(lua_State *);
 
 static void set_fields(lua_State *, int, const table_field *);
 static void set_field(lua_State *, int, char *, int);
@@ -45,7 +46,7 @@ static const struct luaL_Reg threadlib[] = {
     { NULL,         NULL                   }
 };
 
-lua_State *script_create(char *file, char *url, char **headers) {
+lua_State *script_create(char *file, char *url, char **headers, bool multipath) {
     lua_State *L = luaL_newstate();
     luaL_openlibs(L);
     (void) luaL_dostring(L, "wrk = require \"wrk\"");
@@ -65,6 +66,7 @@ lua_State *script_create(char *file, char *url, char **headers) {
         path = &url[parts.field_data[UF_PATH].off];
     }
 
+    
     const table_field fields[] = {
         { "lookup",  LUA_TFUNCTION, script_wrk_lookup  },
         { "connect", LUA_TFUNCTION, script_wrk_connect },
@@ -72,13 +74,24 @@ lua_State *script_create(char *file, char *url, char **headers) {
         { NULL,      0,             NULL               },
     };
 
+    const table_field mpfields[] = {
+        { "lookup",  LUA_TFUNCTION, script_wrk_lookup  },
+        { "connect", LUA_TFUNCTION, script_wrk_mpconnect },
+        { "path",    LUA_TSTRING,   path               },
+        { NULL,      0,             NULL               },
+    };
+
+    
     lua_getglobal(L, "wrk");
 
     set_field(L, 4, "scheme", push_url_part(L, url, &parts, UF_SCHEMA));
     set_field(L, 4, "host",   push_url_part(L, url, &parts, UF_HOST));
     set_field(L, 4, "port",   push_url_part(L, url, &parts, UF_PORT));
-    set_fields(L, 4, fields);
-
+    if(multipath)
+      set_fields(L, 4, mpfields);
+    else
+      set_fields(L, 4, fields);
+    
     lua_getfield(L, 4, "headers");
     for (char **h = headers; *h; h++) {
         char *p = strchr(*h, ':');
@@ -466,10 +479,25 @@ static int script_wrk_lookup(lua_State *L) {
 static int script_wrk_connect(lua_State *L) {
     struct addrinfo *addr = checkaddr(L);
     int fd, connected = 0;
-    if ((fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol)) != -1) {
-        connected = connect(fd, addr->ai_addr, addr->ai_addrlen) == 0;
-        close(fd);
+
+    if( (fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol)) != -1) { 
+      connected = connect(fd, addr->ai_addr, addr->ai_addrlen) == 0;
+      close(fd);
     }
+ 
+    lua_pushboolean(L, connected);
+    return 1;
+}
+
+
+static int script_wrk_mpconnect(lua_State *L) {
+    struct addrinfo *addr = checkaddr(L);
+    int fd, connected = 0;
+    if( (fd = socket(addr->ai_family, addr->ai_socktype, IPPROTO_MPTCP)) != -1) {
+	connected = connect(fd, addr->ai_addr, addr->ai_addrlen) == 0;
+	close(fd);
+      }
+ 
     lua_pushboolean(L, connected);
     return 1;
 }

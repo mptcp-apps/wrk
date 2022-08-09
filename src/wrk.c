@@ -13,6 +13,7 @@ static struct config {
     bool     delay;
     bool     dynamic;
     bool     latency;
+    bool     multipath;
     char    *host;
     char    *script;
     SSL_CTX *ctx;
@@ -53,7 +54,8 @@ static void usage() {
            "        --latency          Print latency statistics   \n"
            "        --timeout     <T>  Socket/request timeout     \n"
            "    -v, --version          Print version details      \n"
-           "                                                      \n"
+	   "    -M, --multipath        Enable Multipath TCP       \n"
+	   "                                                      \n"
            "  Numeric arguments may include a SI unit (1k, 1M, 1G)\n"
            "  Time arguments may include a time unit (2s, 2m, 2h)\n");
 }
@@ -92,7 +94,7 @@ int main(int argc, char **argv) {
     statistics.requests = stats_alloc(MAX_THREAD_RATE_S);
     thread *threads     = zcalloc(cfg.threads * sizeof(thread));
 
-    lua_State *L = script_create(cfg.script, url, headers);
+    lua_State *L = script_create(cfg.script, url, headers, cfg.multipath);
     if (!script_resolve(L, host, service)) {
         char *msg = strerror(errno);
         fprintf(stderr, "unable to connect to %s:%s %s\n", host, service, msg);
@@ -106,7 +108,7 @@ int main(int argc, char **argv) {
         t->loop        = aeCreateEventLoop(10 + cfg.connections * 3);
         t->connections = cfg.connections / cfg.threads;
 
-        t->L = script_create(cfg.script, url, headers);
+        t->L = script_create(cfg.script, url, headers, cfg.multipath);
         script_init(L, t, argc - optind, &argv[optind]);
 
         if (i == 0) {
@@ -238,8 +240,12 @@ static int connect_socket(thread *thread, connection *c) {
     struct aeEventLoop *loop = thread->loop;
     int fd, flags;
 
-    fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-
+    if (cfg.multipath) {
+      fd = socket(addr->ai_family, addr->ai_socktype, IPPROTO_MPTCP);
+    }
+    else
+      fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+      
     flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
@@ -476,6 +482,7 @@ static struct option longopts[] = {
     { "timeout",     required_argument, NULL, 'T' },
     { "help",        no_argument,       NULL, 'h' },
     { "version",     no_argument,       NULL, 'v' },
+    { "multipath",   no_argument,       NULL, 'M' },
     { NULL,          0,                 NULL,  0  }
 };
 
@@ -489,7 +496,7 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
     cfg->duration    = 10;
     cfg->timeout     = SOCKET_TIMEOUT_MS;
 
-    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:Lrv?", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "t:c:d:s:H:T:LrvM?", longopts, NULL)) != -1) {
         switch (c) {
             case 't':
                 if (scan_metric(optarg, &cfg->threads)) return -1;
@@ -517,6 +524,9 @@ static int parse_args(struct config *cfg, char **url, struct http_parser_url *pa
                 printf("wrk %s [%s] ", VERSION, aeGetApiName());
                 printf("Copyright (C) 2012 Will Glozer\n");
                 break;
+	    case 'M':
+	        cfg->multipath = true;
+	        break;
             case 'h':
             case '?':
             case ':':
